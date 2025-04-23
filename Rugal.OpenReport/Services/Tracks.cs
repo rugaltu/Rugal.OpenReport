@@ -509,11 +509,17 @@ public class CellTrack : TrackBase
     {
         this.Cell = Cell;
     }
+    public RowTrack UsingRow(Action<RowTrack> UsingFunc = null)
+    {
+        var Track = ToRow(Address.RowNumber);
+        UsingFunc?.Invoke(Track);
+        return Track;
+    }
     public CellTrack Move(int RelativeRow, int RelativeColumn, Action<CellTrack> MoveFunc = null)
     {
         var Track = ToCell(RowNumber + RelativeRow, ColumnNumber + RelativeColumn);
         MoveFunc?.Invoke(Track);
-        return this;
+        return Track;
     }
     public CellTrack MoveRow(int RelativeRow, Action<CellTrack> MoveFunc = null)
     {
