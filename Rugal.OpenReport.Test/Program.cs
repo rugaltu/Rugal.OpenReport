@@ -13,21 +13,14 @@
 
 using Rugal.OpenReport.Services;
 
-var ExcelPath = "Template/test.xlsx";
+var ExcelPath = "Template/Templete_Export_Memo.xlsx";
 using var Reporter = new ExcelReport(ExcelPath);
 
+var Buffer = File.ReadAllBytes("image.jpg");
 Reporter
-    .UsingSheet("Test", SheetTrack =>
+    .UsingSheet("專案備忘錄", SheetTrack =>
     {
-        SheetTrack.UsingRow(1, Row =>
-        {
-            Row.CopyTo(7);
-        });
-
-        SheetTrack.UsingRows(2, 3, Rows =>
-        {
-            Rows.CopyTo(9);
-        });
+        SheetTrack.UsingCell("A11").SetImage(Buffer);
     })
     .SaveAsXlsx("output");
 

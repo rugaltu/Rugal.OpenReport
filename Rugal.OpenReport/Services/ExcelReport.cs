@@ -39,6 +39,11 @@ public class ExcelReport : IDisposable
     public ExcelReport UsingSheet(string SheetName, Action<SheetTrack> UsingFunc = null)
     {
         var Track = ToSheet(SheetName);
+        if (!Track.PrintRange.Any())
+        {
+            throw new Exception("PrintRange can not be empty, try after setup the PrintRange");
+        }
+
         UsingFunc?.Invoke(Track);
         return this;
     }

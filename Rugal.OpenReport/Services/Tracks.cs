@@ -1,10 +1,15 @@
 ﻿using ClosedXML.Excel;
+using ClosedXML.Excel.Drawings;
+using DocumentFormat.OpenXml.Drawing;
+using DocumentFormat.OpenXml.Drawing.Charts;
+using DocumentFormat.OpenXml.Spreadsheet;
 using Rugal.OpenReport.Models;
 
 namespace Rugal.OpenReport.Services;
 public abstract class TrackBase
 {
     public IXLWorksheet Worksheet { get; protected set; }
+    public IXLPrintAreas PrintRange => Worksheet.PageSetup.PrintAreas;
     public ExcelReport Reporter { get; protected set; }
     public TrackBase(ExcelReport Reporter, IXLWorksheet Worksheet)
     {
@@ -60,6 +65,8 @@ public abstract class TrackBase
     }
     public virtual TrackBase CopyMerge(CopyMergeOption Option)
     {
+        //find any merge range from (StartRow, StartColumn) to (EndRow, EndColumn)
+        //and paste to (TargetRow, TargetColumn)
         var MergeRanges = Worksheet.MergedRanges.ToArray();
         foreach (var MergeRange in MergeRanges)
         {
@@ -81,31 +88,46 @@ public abstract class TrackBase
             if (Option.EndColumn != 0 && MergeEndColumn > Option.EndColumn)
                 continue;
 
-            var MoveRowCount = 0;
-            var MoveColumnCount = 0;
-            if (Option.PositionType == PositionTypes.Move)
-            {
-                MoveRowCount = Option.TargetRow;
-                MoveColumnCount = Option.TargetColumn;
-            }
-            else if (Option.PositionType == PositionTypes.Assign)
-            {
-                MoveRowCount = Option.TargetRow - MergeStartRow;
-                if (Option.TargetColumn > 0)
-                    MoveColumnCount = Option.TargetColumn - MergeStartColumn;
-            }
+            var MoveMergeStartRow = MergeStartRow - Option.StartRow;
+            var MoveMergeStartColumn = MergeStartColumn - Option.StartColumn;
+            var MoveMergeEndRow = MergeEndRow - Option.StartRow;
+            var MoveMergeEndColumn = MergeEndColumn - Option.StartColumn;
 
-            var SetMergeStartRow = MergeStartRow + MoveRowCount;
-            var SetMergeStartColumn = MergeStartColumn + MoveColumnCount;
-
-            var SetMergeEndRow = MergeEndRow + MoveRowCount;
-            int SetMergeEndColumn = MergeEndColumn + MoveColumnCount;
+            var SetMergeStartRow = Option.TargetRow + MoveMergeStartRow;
+            var SetMergeStartColumn = Option.TargetColumn + MoveMergeStartColumn;
+            var SetMergeEndRow = Option.TargetRow + MoveMergeEndRow;
+            int SetMergeEndColumn = Option.TargetColumn + MoveMergeEndColumn;
 
             Worksheet
                 .Range(SetMergeStartRow, SetMergeStartColumn, SetMergeEndRow, SetMergeEndColumn)
                 .Merge();
         }
         return this;
+    }
+    public virtual double ConvertWidthToPixels(double Width)
+    {
+        if (Width == 0)
+            return 0;
+
+        if (Width <= 1)
+            return Width * 12;
+
+        return (Width - 1) * 7 + 5;
+    }
+    public virtual double ConvertHeightToPixels(double Height)
+    {
+        return Height * 96 / 72;
+    }
+    public virtual double ConvertPixelsToWidth(double Pixels)
+    {
+        if (Pixels <= 5)
+            return 1.0;
+
+        return (Pixels - 5) / 7.0 + 1;
+    }
+    public virtual double ConvertPixelsToHeight(double Pixels)
+    {
+        return Pixels * 72.0 / 96.0;
     }
 }
 public class SheetTrack : TrackBase
@@ -211,17 +233,20 @@ public class RowTrack : TrackBase
 
         TargetRow.Style = Row.Style;
         TargetRow.Height = Row.Height;
-        var SourceCells = Row.CellsUsed();
-        foreach (var SourceCell in SourceCells)
+
+        var StartUsedColumn = PrintRange.First().FirstColumn().ColumnNumber();
+        var EndUsedColumn = PrintRange.First().LastColumn().ColumnNumber();
+
+        for (var i = StartUsedColumn; i <= EndUsedColumn; i++)
         {
-            var TargetCell = TargetRow.Cell(SourceCell.Address.ColumnNumber);
+            var SourceCell = Row.Cell(i);
+            var TargetCell = TargetRow.Cell(i);
             TargetCell.Value = SourceCell.Value;
             TargetCell.Style = SourceCell.Style;
         }
 
         CopyMerge(new CopyMergeOption()
         {
-            PositionType = PositionTypes.Assign,
             StartRow = RowNumber,
             EndRow = RowNumber,
             TargetRow = TargetRowNumber,
@@ -355,22 +380,17 @@ public class RowsTrack : TrackBase
 
         foreach (var Row in Rows)
         {
-            TargetRow.Style = Row.Style;
-            TargetRow.Height = Row.Height;
-
-            var SourceCells = Row.CellsUsed();
-            foreach (var SourceCell in SourceCells)
+            new RowTrack(this, Row).UsingCopyTo(new CopyRowOption()
             {
-                var TargetCell = TargetRow.Cell(SourceCell.Address.ColumnNumber);
-                TargetCell.Value = SourceCell.Value;
-                TargetCell.Style = SourceCell.Style;
-            }
-
+                TargetRow = TargetRow.RowNumber(),
+                PasteType = PasteTypes.Overwrite,
+                PositionType = PositionTypes.Assign,
+            });
             TargetRow = TargetRow.RowBelow();
         }
+
         CopyMerge(new CopyMergeOption()
         {
-            PositionType = PositionTypes.Assign,
             StartRow = StartRow,
             EndRow = EndRow,
             TargetRow = TargetRowNumber,
@@ -534,7 +554,46 @@ public class CellTrack : TrackBase
     public CellTrack SetImage(Stream Stream)
     {
         var Image = Worksheet.AddPicture(Stream);
-        Image.MoveTo(Cell);
+
+        var CellWidthPx = GetCellWidthPixels();
+        var CellHeightPx = GetCellHeightPixels();
+
+        if (Cell.IsMerged())
+        {
+            var MergedRange = Cell.MergedRange();
+            CellWidthPx = MergedRange.Columns()
+                .Sum(Item =>
+                {
+                    var Width = Worksheet.Column(Item.ColumnNumber()).Width;
+                    var WidthPx = ConvertWidthToPixels(Width);
+                    return WidthPx;
+                });
+
+            CellHeightPx = MergedRange.Rows()
+                .Sum(Item =>
+                {
+                    var Height = Worksheet.Row(Item.RowNumber()).Height;
+                    var HeightPx = ConvertHeightToPixels(Height);
+                    return HeightPx;
+                });
+
+            MergedRange.Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.CenterContinuous);
+        }
+
+        var ScaleX = CellWidthPx / (Image.Width / 1.1);
+        var ScaleY = CellHeightPx / Image.Height;
+        var TargetScale = Math.Min(ScaleX, ScaleY);
+
+        //var ImageScaleWidth = Image.Width * TargetScale;
+        //var ImageScaleHeight = Image.Height * TargetScale;
+        //var OffsetX = (int)((CellWidthPx - ImageScaleWidth) / 2);
+        //var OffsetY = (int)((CellHeightPx - ImageScaleHeight) / 2);
+
+        Image
+            .WithPlacement(XLPicturePlacement.Move)
+            .Scale(TargetScale, true)
+            .MoveTo(Cell);
+
         Stream?.Dispose();
         return this;
     }
@@ -549,4 +608,10 @@ public class CellTrack : TrackBase
         Cell.SetValue(Value);
         return this;
     }
+    public TValue GetValue<TValue>() => Cell.GetValue<TValue>();
+    public XLCellValue GetValue() => Cell.Value;
+    public double GetCellWidth() => Worksheet.Column(ColumnNumber).Width;
+    public double GetCellHeight() => Worksheet.Row(RowNumber).Height;
+    public double GetCellWidthPixels() => ConvertWidthToPixels(GetCellWidth());
+    public double GetCellHeightPixels() => ConvertHeightToPixels(GetCellHeight());
 }
