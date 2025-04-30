@@ -8,14 +8,25 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="image" />
     <None Remove="image.jpg" />
+    <None Remove="image4" />
     <None Remove="Template\Templete_Export_Memo.xlsx" />
     <None Remove="Template\Templete_Export_Missing.xlsx" />
     <None Remove="Template\test.xlsx" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="image">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="image.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="image3">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="image4">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Template\Templete_Export_Memo.xlsx">

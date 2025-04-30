@@ -1,9 +1,8 @@
 ﻿using ClosedXML.Excel;
 using ClosedXML.Excel.Drawings;
-using DocumentFormat.OpenXml.Drawing;
-using DocumentFormat.OpenXml.Drawing.Charts;
-using DocumentFormat.OpenXml.Spreadsheet;
+using ImageMagick;
 using Rugal.OpenReport.Models;
+using Rugal.OpenReport.StoreBinding;
 
 namespace Rugal.OpenReport.Services;
 public abstract class TrackBase
@@ -24,10 +23,10 @@ public abstract class TrackBase
         var GetRow = Worksheet.Row(Row);
         return new RowTrack(this, GetRow);
     }
-    protected virtual RowsTrack ToRows(int StartRow, int EndRow)
+    protected virtual RowsRangeTrack ToRows(int StartRow, int EndRow)
     {
         var Rows = Worksheet.Rows(StartRow, EndRow);
-        var Track = new RowsTrack(this, Rows);
+        var Track = new RowsRangeTrack(this, Rows);
         return Track;
     }
     protected virtual CellTrack ToCell(int Row, int Column)
@@ -129,11 +128,53 @@ public abstract class TrackBase
     {
         return Pixels * 72.0 / 96.0;
     }
+
+    protected virtual IXLPicture AddImage(Stream Stream)
+    {
+        var SupportFormats = new[]
+        {
+            MagickFormat.Jpeg,
+            MagickFormat.Jpg,
+            MagickFormat.Png,
+            MagickFormat.Gif,
+            MagickFormat.Bmp,
+            MagickFormat.Tiff,
+            MagickFormat.Tif,
+        };
+        var ConvertImage = new MagickImage(Stream);
+        if (SupportFormats.Contains(ConvertImage.Format))
+        {
+            var SupportImage = Worksheet.AddPicture(Stream);
+            Stream.Dispose();
+            return SupportImage;
+        }
+
+        var ConvertStream = new MemoryStream();
+        ConvertImage.Write(ConvertStream, MagickFormat.Png);
+        var JpegImage = Worksheet.AddPicture(ConvertStream);
+
+        ConvertStream?.Dispose();
+        ConvertImage?.Dispose();
+        return JpegImage;
+    }
 }
 public class SheetTrack : TrackBase
 {
+    public BindingSet BindingSet { get; set; }
+    public object Store { get; set; }
     public SheetTrack(ExcelReport Reporter, IXLWorksheet Worksheet) : base(Reporter, Worksheet)
     {
+        BindingSet = new BindingSet(this);
+    }
+    public SheetTrack WithStore<TStore>(TStore Store)
+    {
+        this.Store = Store;
+        return this;
+    }
+    public SheetTrack WriteStoreBinding()
+    {
+        BindingSet.WriteBinding();
+        return this;
     }
     public RowTrack UsingRow(int Row, Action<RowTrack> UsingFunc = null)
     {
@@ -141,7 +182,7 @@ public class SheetTrack : TrackBase
         UsingFunc?.Invoke(Track);
         return Track;
     }
-    public RowsTrack UsingRows(int StartRow, int EndRow, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingRowsRange(int StartRow, int EndRow, Action<RowsRangeTrack> UsingFunc = null)
     {
         var Track = ToRows(StartRow, EndRow);
         UsingFunc?.Invoke(Track);
@@ -276,7 +317,7 @@ public class RowTrack : TrackBase
         }, UsingFunc);
         return Track;
     }
-    public RowTrack UsingCopyTo(RowsTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowTrack> UsingFunc = null)
+    public RowTrack UsingCopyTo(RowsRangeTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowTrack> UsingFunc = null)
     {
         var TargetRow = PasteType switch
         {
@@ -318,7 +359,7 @@ public class RowTrack : TrackBase
         UsingCopyTo(SourceTrack, PasteType);
         return this;
     }
-    public RowTrack CopyTo(RowsTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
+    public RowTrack CopyTo(RowsRangeTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
     {
         UsingCopyTo(SourceTrack, PasteType);
         return this;
@@ -329,14 +370,14 @@ public class RowTrack : TrackBase
         return this;
     }
 }
-public class RowsTrack : TrackBase
+public class RowsRangeTrack : TrackBase
 {
     public IXLRows Rows { get; protected set; }
     public IXLRow[] RowList => [.. Rows];
     public int RowsCount => Rows.Count();
     public int StartRow => Rows.First().RowNumber();
     public int EndRow => Rows.Last().RowNumber();
-    public RowsTrack(TrackBase RootTrack, IXLRows Rows) : base(RootTrack)
+    public RowsRangeTrack(TrackBase RootTrack, IXLRows Rows) : base(RootTrack)
     {
         this.Rows = Rows;
     }
@@ -351,7 +392,7 @@ public class RowsTrack : TrackBase
         UsingFunc?.Invoke(Track);
         return Track;
     }
-    public RowsTrack UsingCopyTo(CopyRowOption Option, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingCopyTo(CopyRowOption Option, Action<RowsRangeTrack> UsingFunc = null)
     {
         var TargetRowNumber = 0;
         if (Option.PositionType == PositionTypes.Assign)
@@ -396,11 +437,11 @@ public class RowsTrack : TrackBase
             TargetRow = TargetRowNumber,
         });
 
-        var InsertedRowsTrack = new RowsTrack(this, InsertedRows);
-        UsingFunc?.Invoke(InsertedRowsTrack);
-        return InsertedRowsTrack;
+        var InsertedRowsRangeTrack = new RowsRangeTrack(this, InsertedRows);
+        UsingFunc?.Invoke(InsertedRowsRangeTrack);
+        return InsertedRowsRangeTrack;
     }
-    public RowsTrack UsingCopyTo(int TargetRow, Action<CopyRowOption> OptionFunc = null, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingCopyTo(int TargetRow, Action<CopyRowOption> OptionFunc = null, Action<RowsRangeTrack> UsingFunc = null)
     {
         var Option = new CopyRowOption()
         {
@@ -410,7 +451,7 @@ public class RowsTrack : TrackBase
         var Track = UsingCopyTo(Option, UsingFunc);
         return Track;
     }
-    public RowsTrack UsingCopyTo(RowTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingCopyTo(RowTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsRangeTrack> UsingFunc = null)
     {
         var Track = UsingCopyTo(new CopyRowOption()
         {
@@ -420,7 +461,7 @@ public class RowsTrack : TrackBase
         }, UsingFunc);
         return Track;
     }
-    public RowsTrack UsingCopyTo(RowsTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingCopyTo(RowsRangeTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsRangeTrack> UsingFunc = null)
     {
         var TargetRow = PasteType switch
         {
@@ -437,7 +478,7 @@ public class RowsTrack : TrackBase
         }, UsingFunc);
         return Track;
     }
-    public RowsTrack UsingCopyTo(CellTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsTrack> UsingFunc = null)
+    public RowsRangeTrack UsingCopyTo(CellTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite, Action<RowsRangeTrack> UsingFunc = null)
     {
         var Track = UsingCopyTo(new CopyRowOption()
         {
@@ -447,27 +488,27 @@ public class RowsTrack : TrackBase
         }, UsingFunc);
         return Track;
     }
-    public RowsTrack CopyTo(CopyRowOption Option)
+    public RowsRangeTrack CopyTo(CopyRowOption Option)
     {
         UsingCopyTo(Option);
         return this;
     }
-    public RowsTrack CopyTo(int TargetRow, Action<CopyRowOption> OptionFunc = null)
+    public RowsRangeTrack CopyTo(int TargetRow, Action<CopyRowOption> OptionFunc = null)
     {
         UsingCopyTo(TargetRow, OptionFunc);
         return this;
     }
-    public RowsTrack CopyTo(RowTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
+    public RowsRangeTrack CopyTo(RowTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
     {
         UsingCopyTo(SourceTrack, PasteType);
         return this;
     }
-    public RowsTrack CopyTo(RowsTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
+    public RowsRangeTrack CopyTo(RowsRangeTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
     {
         UsingCopyTo(SourceTrack, PasteType);
         return this;
     }
-    public RowsTrack CopyTo(CellTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
+    public RowsRangeTrack CopyTo(CellTrack SourceTrack, PasteTypes PasteType = PasteTypes.Overwrite)
     {
         UsingCopyTo(SourceTrack, PasteType);
         return this;
@@ -498,9 +539,38 @@ public class RangeTrack : TrackBase
         MoveFunc?.Invoke(Track);
         return this;
     }
-    public RangeTrack CopyTo(IXLCell TargetCell)
+    public RangeTrack CopyTo(IXLCell PositionCell)
     {
-        Range.CopyTo(TargetCell);
+        var TargetRow = PositionCell.WorksheetRow();
+        var TargetColumn = PositionCell.WorksheetColumn();
+
+        var StartColumn = StartAddress.ColumnNumber;
+        var EndColumn = EndAddress.ColumnNumber;
+
+        foreach (var Row in Range.Rows())
+        {
+            TargetRow.Style = Row.Style;
+            TargetRow.Height = Row.WorksheetRow().Height;
+            for (var i = StartColumn; i <= EndColumn; i++)
+            {
+                var SourceCell = Row.Cell(i);
+                var TargetCell = TargetRow.Cell(i);
+                TargetCell.Value = SourceCell.Value;
+                TargetCell.Style = SourceCell.Style;
+            }
+
+            TargetRow = TargetRow.RowBelow();
+        }
+
+        CopyMerge(new CopyMergeOption()
+        {
+            StartRow = StartAddress.RowNumber,
+            StartColumn = StartAddress.ColumnNumber,
+            EndRow = EndAddress.RowNumber,
+            EndColumn = EndAddress.ColumnNumber,
+            TargetRow = TargetRow.RowNumber(),
+            TargetColumn = TargetColumn.ColumnNumber(),
+        });
         return this;
     }
     public RangeTrack CopyTo(CellTrack CellTrack)
@@ -553,15 +623,14 @@ public class CellTrack : TrackBase
     }
     public CellTrack SetImage(Stream Stream)
     {
-        var Image = Worksheet.AddPicture(Stream);
-
-        var CellWidthPx = GetCellWidthPixels();
-        var CellHeightPx = GetCellHeightPixels();
+        var Image = AddImage(Stream);
+        var CellWidthPx = (int)GetCellWidthPixels();
+        var CellHeightPx = (int)GetCellHeightPixels();
 
         if (Cell.IsMerged())
         {
             var MergedRange = Cell.MergedRange();
-            CellWidthPx = MergedRange.Columns()
+            CellWidthPx = (int)MergedRange.Columns()
                 .Sum(Item =>
                 {
                     var Width = Worksheet.Column(Item.ColumnNumber()).Width;
@@ -569,7 +638,7 @@ public class CellTrack : TrackBase
                     return WidthPx;
                 });
 
-            CellHeightPx = MergedRange.Rows()
+            CellHeightPx = (int)MergedRange.Rows()
                 .Sum(Item =>
                 {
                     var Height = Worksheet.Row(Item.RowNumber()).Height;
@@ -580,9 +649,12 @@ public class CellTrack : TrackBase
             MergedRange.Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.CenterContinuous);
         }
 
-        var ScaleX = CellWidthPx / (Image.Width / 1.1);
-        var ScaleY = CellHeightPx / Image.Height;
+        var ScaleX = (double)CellWidthPx / (Image.Width);
+        var ScaleY = (double)CellHeightPx / Image.Height;
         var TargetScale = Math.Min(ScaleX, ScaleY);
+
+        var TargetWidthPx = Math.Floor(Image.Width * TargetScale - 4);
+        var TargetHeightPx = Math.Floor(Image.Height * TargetScale - 20);
 
         //var ImageScaleWidth = Image.Width * TargetScale;
         //var ImageScaleHeight = Image.Height * TargetScale;
@@ -591,10 +663,9 @@ public class CellTrack : TrackBase
 
         Image
             .WithPlacement(XLPicturePlacement.Move)
-            .Scale(TargetScale, true)
-            .MoveTo(Cell);
+            .WithSize((int)TargetWidthPx, (int)TargetHeightPx)
+            .MoveTo(Cell, 2, 4);
 
-        Stream?.Dispose();
         return this;
     }
     public CellTrack SetImage(byte[] Buffer)
