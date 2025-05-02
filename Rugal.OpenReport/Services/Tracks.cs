@@ -369,6 +369,10 @@ public class RowTrack : TrackBase
         UsingCopyTo(SourceTrack, PasteType);
         return this;
     }
+    public void Delete()
+    {
+        Row.Delete();
+    }
 }
 public class RowsRangeTrack : TrackBase
 {
@@ -512,6 +516,10 @@ public class RowsRangeTrack : TrackBase
     {
         UsingCopyTo(SourceTrack, PasteType);
         return this;
+    }
+    public void Delete()
+    {
+        Rows.Delete();
     }
 }
 public class RangeTrack : TrackBase
